@@ -11,10 +11,16 @@ import { corsOriginChecker } from './config/cors';
 import { NodeEnv } from './config/env.validation';
 import { API_PREFIX } from './config/api-prefix';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { MAX_REQUEST_BODY_BYTES } from './config/payload';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+
+  // Express defaults to 100kb, well under the 256 KB a beat's data may be. Below
+  // the documented cap, body-parser refuses the request before any handler runs
+  // and BeatService's own size check can never be reached.
+  app.useBodyParser('json', { limit: MAX_REQUEST_BODY_BYTES });
 
   app.use(cookieParser());
 

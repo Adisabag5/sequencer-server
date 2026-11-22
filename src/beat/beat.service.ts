@@ -12,8 +12,7 @@ import { UpdateBeatDto } from './dto/update-beat.dto';
 import { CollectionService } from '../collection/collection.service';
 import { paginate, Paginated } from '../common/pagination';
 import { FindBeatsQueryDto } from './dto/find-beats-query.dto';
-
-const MAX_DATA_BYTES = 256 * 1024;
+import { MAX_BEAT_DATA_BYTES } from '../config/payload';
 
 @Injectable()
 export class BeatService {
@@ -101,7 +100,7 @@ export class BeatService {
       throw new BadRequestException('data.version must be a positive integer');
     }
 
-    if (Buffer.byteLength(JSON.stringify(data), 'utf8') > MAX_DATA_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(data), 'utf8') > MAX_BEAT_DATA_BYTES) {
       throw new BadRequestException('data exceeds the maximum size');
     }
   }

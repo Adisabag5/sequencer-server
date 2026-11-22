@@ -43,10 +43,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
     const request = http.getRequest<Request>();
 
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    const status = statusFor(exception);
 
     const body: ErrorBody = {
       statusCode: status,
@@ -70,11 +67,42 @@ export class AllExceptionsFilter implements ExceptionFilter {
 }
 
 /**
+ * Not everything that reaches here is a Nest exception. Express middleware
+ * throws plain errors that already carry an HTTP status — body-parser's
+ * PayloadTooLargeError is a 413 — and flattening those to 500 both loses the
+ * right answer and reports our bug where the caller made a mistake.
+ *
+ * Only a plausible status is trusted; anything else is a bug and stays a 500.
+ */
+function statusFor(exception: unknown): number {
+  if (exception instanceof HttpException) return exception.getStatus();
+
+  const carried =
+    (exception as { status?: unknown; statusCode?: unknown } | null) ?? {};
+  const status =
+    typeof carried.status === 'number' ? carried.status : carried.statusCode;
+
+  return typeof status === 'number' && status >= 400 && status <= 599
+    ? status
+    : HttpStatus.INTERNAL_SERVER_ERROR;
+}
+
+/**
  * HttpException bodies come in two shapes: a bare string, or an object with
  * `message` (which ValidationPipe fills with an array).
  */
 function messageFrom(exception: unknown, status: number): string | string[] {
-  if (!(exception instanceof HttpException)) return 'Internal server error';
+  if (!(exception instanceof HttpException)) {
+    // A 4xx from outside Nest is still the caller being told about their own
+    // request, so its message is safe and useful — body-parser's "request
+    // entity too large" being the one that turns up in practice. 5xx keeps
+    // saying nothing.
+    const message = (exception as { message?: unknown } | null)?.message;
+
+    return status < SERVER_ERROR && typeof message === 'string'
+      ? message
+      : 'Internal server error';
+  }
 
   const payload = exception.getResponse();
 
@@ -89,7 +117,7 @@ function messageFrom(exception: unknown, status: number): string | string[] {
 }
 
 function nameFor(exception: unknown, status: number): string {
-  if (!(exception instanceof HttpException)) return 'Internal Server Error';
+  if (!(exception instanceof HttpException)) return defaultReason(status);
 
   const payload = exception.getResponse();
 

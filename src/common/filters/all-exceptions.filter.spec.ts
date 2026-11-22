@@ -79,6 +79,67 @@ describe('AllExceptionsFilter', () => {
     expect(body().statusCode).toBe(HttpStatus.TOO_MANY_REQUESTS);
   });
 
+  describe('an error from outside Nest that carries its own status', () => {
+    /** body-parser's PayloadTooLargeError, in the shape Express throws it. */
+    const payloadTooLarge = Object.assign(
+      new Error('request entity too large'),
+      {
+        status: 413,
+        statusCode: 413,
+        expose: true,
+        type: 'entity.too.large',
+      },
+    );
+
+    it('keeps the status instead of flattening it to 500', () => {
+      // This was a real regression: the filter turned Express's 413 into a 500,
+      // reporting our bug where the caller had simply sent too much.
+      const { host, status, body } = hostFor();
+
+      filter.catch(payloadTooLarge, host);
+
+      expect(status).toHaveBeenCalledWith(HttpStatus.PAYLOAD_TOO_LARGE);
+      expect(body().statusCode).toBe(413);
+      expect(body().error).toBe('Payload Too Large');
+    });
+
+    it('passes its message through, because a 4xx is about the request', () => {
+      const { host, body } = hostFor();
+
+      filter.catch(payloadTooLarge, host);
+
+      expect(body().message).toBe('request entity too large');
+    });
+
+    it('does not log it — the caller was told no, nothing broke', () => {
+      const { host } = hostFor();
+
+      filter.catch(payloadTooLarge, host);
+
+      expect(logged).not.toHaveBeenCalled();
+    });
+
+    it('still says nothing when the carried status is a 5xx', () => {
+      const { host, status, body } = hostFor();
+
+      filter.catch(
+        Object.assign(new Error('upstream exploded'), { status: 502 }),
+        host,
+      );
+
+      expect(status).toHaveBeenCalledWith(502);
+      expect(body().message).toBe('Internal server error');
+    });
+
+    it('ignores a status that is not a plausible one', () => {
+      const { host, status } = hostFor();
+
+      filter.catch(Object.assign(new Error('nonsense'), { status: 99 }), host);
+
+      expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+    });
+  });
+
   describe('something that is not an HttpException', () => {
     const driverError = new QueryFailedError(
       'SELECT * FROM users WHERE email = ?',
