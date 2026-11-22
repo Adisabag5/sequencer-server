@@ -50,6 +50,7 @@ src/
   config/env.validation.ts EnvironmentVariables class + validateEnv(); fails boot on a bad .env
   config/data-source.ts    DataSource for the TypeORM CLI only (the app uses forRootAsync)
   config/throttle.ts       rate limits: the default budget and the strict auth one
+  config/payload.ts        the beat data cap and the JSON body limit, which must agree
   migrations/              versioned schema SQL; production runs these on boot
   common/pagination.ts     paginate() + buildMeta(); the Paginated<T> shape
   common/filters/all-exceptions.filter.ts  one error shape; hides non-HTTP errors, logs 5xx
@@ -256,7 +257,11 @@ rather than destroying work) · `title` varchar(100) · `data` **json** · times
 `data` holds Pulse's `SavedState` v2 verbatim — `{version, bpm, activeKit, tracks[]}`,
 defined in `visual-sequencer/src/app/state/storage.service.ts`. The server stores it
 **opaquely**: it validates only that `version` is a positive integer and that the payload
-is under 256 KB. The frontend owns that schema and its migrations, so modelling tracks and
+is under 256 KB (`config/payload.ts`). The JSON body limit is set from the same file and
+is deliberately higher — Express defaults to **100kb**, which silently made the 256 KB cap
+unreachable: body-parser refused anything larger before `BeatService` could check it, so
+the documented limit was never the one doing the work. The frontend owns that schema and
+its migrations, so modelling tracks and
 steps relationally here would mean a server change for every frontend tweak. Note this
 also means `data` must NOT be validated as a nested DTO — the global `whitelist` would
 strip every property that isn't declared.
@@ -371,6 +376,12 @@ messages. Anything that is not an `HttpException` is a bug rather than a refusal
 becomes a flat 500 saying nothing, while the real error and its stack go to the log. A
 `QueryFailedError` carries the SQL, the column names and the parameters, and none of that
 belongs in a response. 4xx is not logged; it is the client being told no.
+
+With one exception: an error that **already carries an HTTP status** keeps it. Express
+middleware throws plain errors with a status attached — body-parser's
+`PayloadTooLargeError` is a 413 — and flattening those to 500 loses the right answer and
+reports our bug where the caller simply sent too much. A 4xx also keeps its message, since
+it is about the request; a 5xx still says nothing.
 
 **CI** (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
 install, `lint:check`, `typecheck`, both suites, then `build`. It needs no MySQL and no
