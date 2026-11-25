@@ -85,9 +85,36 @@ services:
         condition: service_healthy
     labels:
       - 'traefik.enable=true'
+      # The apex is the canonical origin and the only router that reaches the
+      # app. No middleware on it, so nothing can come between a visitor and the
+      # site.
       - 'traefik.http.routers.pulse.rule=Host(`${DOMAIN:?set DOMAIN in .env}`)'
       - 'traefik.http.routers.pulse.entrypoints=websecure'
       - 'traefik.http.routers.pulse.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.pulse.service=pulse'
+
+      # www exists only to redirect to the apex. It needs its own router for one
+      # unobvious reason: TLS is negotiated before any routing happens, so
+      # without a router asking for a certificate that covers www, the handshake
+      # fails and the browser shows a security warning instead of following a
+      # redirect. The certificate ends up with both names in it.
+      #
+      # A redirect rather than serving the app on both names, because the
+      # session design assumes one origin: the refresh cookie is set on the
+      # apex, and CORS_ORIGIN lists the apex. Answering on www too would hand a
+      # visitor a cookie scoped to the wrong host and fail in ways that are
+      # painful to reproduce.
+      - 'traefik.http.routers.pulse-www.rule=Host(`www.${DOMAIN}`)'
+      - 'traefik.http.routers.pulse-www.entrypoints=websecure'
+      - 'traefik.http.routers.pulse-www.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.pulse-www.service=pulse'
+      - 'traefik.http.routers.pulse-www.middlewares=www-to-apex'
+      # $${1} is how a literal $1 survives Compose's interpolation. The capture
+      # keeps the path, so /api/health on www lands on /api/health on the apex.
+      - 'traefik.http.middlewares.www-to-apex.redirectregex.regex=^https://www\.(.+)'
+      - 'traefik.http.middlewares.www-to-apex.redirectregex.replacement=https://$${1}'
+      - 'traefik.http.middlewares.www-to-apex.redirectregex.permanent=true'
+
       # Which container port to forward to. Unambiguous today, required the
       # moment an image exposes more than one.
       - 'traefik.http.services.pulse.loadbalancer.server.port=3000'
