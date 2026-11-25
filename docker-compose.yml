@@ -1,0 +1,167 @@
+# Pulse on one VPS: Traefik terminates TLS, the Nest app answers under /api (and
+# serves the built client when CLIENT_DIST is set), MySQL holds the state.
+#
+#   docker compose up -d --build
+#
+# Only Traefik publishes a port. The app and the database are reachable on the
+# private compose network and nowhere else — which also means Docker's iptables
+# rules open nothing behind ufw's back, because there is nothing published to
+# open. Compose reads .env for ${...} substitution and hands it to the app
+# through env_file; the values under `environment:` describe the container's
+# world and override it.
+
+# Docker's default json-file driver grows without limit, and a full disk takes
+# the whole box down with it. One policy, shared by every service below through
+# a YAML anchor.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  reverse-proxy:
+    # Pinned to the v3 line. Check hub.docker.com/_/traefik and pin the exact
+    # minor (traefik:v3.6) once you know which one you are running; the ACME and
+    # entrypoint flags below are stable across 3.x.
+    image: traefik:v3
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      # Read configuration from container labels. exposedbydefault=false means a
+      # container is routed only if it asks to be — so the database never is,
+      # even by accident.
+      - '--providers.docker=true'
+      - '--providers.docker.exposedbydefault=false'
+      - '--entrypoints.web.address=:80'
+      - '--entrypoints.websecure.address=:443'
+      # Redirect at the entrypoint rather than per service: one rule nothing can
+      # forget, instead of a pair of labels on every router.
+      - '--entrypoints.web.http.redirections.entryPoint.to=websecure'
+      - '--entrypoints.web.http.redirections.entryPoint.scheme=https'
+      # TLS-ALPN challenge: no DNS API credentials and no webroot to share with
+      # the app — it is answered on port 443, which Traefik already owns.
+      - '--certificatesresolvers.letsencrypt.acme.tlschallenge=true'
+      - '--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}'
+      - '--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json'
+      # Uncomment while debugging certificates, then put it back. Let's Encrypt
+      # allows only a handful of failures per week against the real endpoint,
+      # and the staging one has no such limit (its certs are untrusted).
+      # - '--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory'
+    ports:
+      - '80:80'
+      - '443:443'
+      # Deliberately no 8080. The dashboard needs --api.insecure, and a
+      # published port is reachable from the internet whatever ufw says, so it
+      # would be a public map of every route on this box.
+    volumes:
+      # Read-only, and still the most powerful line in this file: the socket is
+      # root on the host. It is how Traefik discovers the labels below.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # acme.json holds the certificate private keys. It must survive restarts,
+      # or every redeploy asks Let's Encrypt for new ones and hits the limit.
+      - letsencrypt:/letsencrypt
+
+  app:
+    build: .
+    restart: unless-stopped
+    # Reap zombie processes in a long-running container.
+    init: true
+    logging: *default-logging
+    env_file: .env
+    environment:
+      # The database is at the service name. Inside a container `localhost` is
+      # the container itself — the most common reason a dockerised app cannot
+      # find its database.
+      DB_HOST: db
+      DB_PORT: 3306
+      NODE_ENV: production
+      PORT: 3000
+      # Traefik is the one proxy hop in front, so req.ip is the real caller and
+      # rate limiting counts per visitor rather than per proxy.
+      TRUST_PROXY: 1
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.pulse.rule=Host(`${DOMAIN:?set DOMAIN in .env}`)'
+      - 'traefik.http.routers.pulse.entrypoints=websecure'
+      - 'traefik.http.routers.pulse.tls.certresolver=letsencrypt'
+      # Which container port to forward to. Unambiguous today, required the
+      # moment an image exposes more than one.
+      - 'traefik.http.services.pulse.loadbalancer.server.port=3000'
+    # No `deploy: replicas:`. Traefik would happily load balance across several
+    # app containers, but this app is not ready for it: migrationsRun applies
+    # pending migrations at boot, so N containers race on one database with no
+    # lock, and the rate limiter counts in memory, so the 10-per-minute sign-in
+    # budget would silently become N × 10. Scaling out means a one-shot
+    # migration step and Redis-backed throttling first.
+
+    # Serving the built Angular app from this same origin: mount the build in,
+    # and add
+    #     CLIENT_DIST: /srv/client
+    # to the `environment:` block above — not a second one, duplicate YAML keys
+    # are an error. CLIENT_DIST in .env is a *host* path the container cannot
+    # see, and the server refuses to boot rather than 404 every page.
+    # volumes:
+    #   - /var/www/pulse/client:/srv/client:ro
+
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      # The image creates this user and database on first boot only — on an
+      # existing volume it ignores them, so a changed name here later means a
+      # manual CREATE DATABASE rather than a restart.
+      # MYSQL_USER cannot be `root`; the image refuses to boot.
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:?set DB_NAME in .env}
+      MYSQL_USER: ${DB_USER:?set DB_USER in .env}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    # A named volume, so `docker compose down` keeps the data and only
+    # `down -v` destroys it. This volume is the only thing here that matters;
+    # everything else is rebuildable.
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      # What `depends_on: service_healthy` waits for. MySQL accepts TCP
+      # connections seconds before it can answer a query, so "the port is open"
+      # is not a useful signal — this asks the server itself.
+      # CMD-SHELL, not CMD: the password is in an env var and the exec form has
+      # no shell to expand it. ($$ is how a literal $ survives Compose.)
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # No `ports:`. Publishing 3306 would put the database on the public
+    # internet. To inspect it from Workbench, tunnel over SSH instead:
+    #   ssh -L 3306:127.0.0.1:3306 you@vps
+    # and uncomment a loopback-only binding here:
+    # ports:
+    #   - '127.0.0.1:3306:3306'
+
+  # Automated deploys, the way the Dreams of Code video does it: Watchtower
+  # polls for a new image on a fixed tag and restarts the container. It only
+  # works on a *pulled* image, so `build: .` above would become
+  # `image: ghcr.io/adisabag5/sequencer-server:prod` with CI building it — there
+  # is nothing to watch when the box builds its own image.
+  # Two costs to accept: a second container holding the Docker socket, and
+  # migrations applying unattended on every push. The explicit alternative is a
+  # CI step that ssh's in and runs `docker compose pull && docker compose up -d`.
+  # watchtower:
+  #   image: containrrr/watchtower
+  #   restart: unless-stopped
+  #   logging: *default-logging
+  #   # 30s in the video; 300 is plenty and five times less registry traffic.
+  #   command: ['--label-enable', '--interval', '300', '--rolling-restart']
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  # ...and on the app service, add this label so Watchtower only touches it:
+  #   - 'com.centurylinklabs.watchtower.enable=true'
+
+volumes:
+  db-data:
+  letsencrypt:
