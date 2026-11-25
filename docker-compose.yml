@@ -21,10 +21,10 @@ x-logging: &default-logging
 
 services:
   reverse-proxy:
-    # Pinned to the v3 line. Check hub.docker.com/_/traefik and pin the exact
-    # minor (traefik:v3.6) once you know which one you are running; the ACME and
-    # entrypoint flags below are stable across 3.x.
-    image: traefik:v3
+    # Pinned to a minor, not to v3: a floating major tag means an upgrade
+    # arrives on whichever redeploy happens to re-pull, which is not a thing to
+    # discover during an outage. Verified against 3.8.0 locally.
+    image: traefik:v3.8
     restart: unless-stopped
     logging: *default-logging
     command:
