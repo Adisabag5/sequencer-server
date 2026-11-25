@@ -247,6 +247,23 @@ Four things about that setup are deliberate:
 - **No dashboard.** It needs `--api.insecure=true`, and a published port is reachable from
   the internet whatever `ufw` says, so it would be a public map of every route on the box.
 
+**`www` gets its own router, which only redirects.** If the DNS has a `www` record — and
+Hostinger adds one by default — it needs a router, or visitors typing `www.` get a
+*certificate* error rather than a 404. TLS is negotiated before any routing happens, so
+with no router asking for a certificate that covers `www`, Traefik falls back to its
+self-signed default and the browser refuses before it can be redirected anywhere. A second
+router fixes that, and the certificate ends up carrying both names.
+
+A redirect rather than serving the app on both names, because the session design assumes
+one origin: the refresh cookie is set on the apex and `CORS_ORIGIN` lists the apex, so
+answering on `www` too would hand a visitor a cookie scoped to the wrong host and fail in
+ways that are painful to reproduce. The apex router deliberately carries no middleware, so
+nothing sits between a visitor and the site.
+
+Traefik answers a permanent `redirectregex` with **308**, not 301, which preserves the
+request method — a POST to `www` arrives at the apex as a POST. The path and query survive
+too, through the regex capture.
+
 Two Traefik-specific failure modes worth knowing before the first deploy. The
 `letsencrypt` volume holds `acme.json`, which holds the certificate private keys: lose it
 and every redeploy asks Let's Encrypt for new certificates, which has a weekly limit you
@@ -514,11 +531,25 @@ and the `/api/auth` path in one go.
 ## First admin
 
 Roles are not settable through the API — signup is public, so a settable role would let
-anyone mint an admin. Promote out of band, on the server:
+anyone mint an admin. Promote out of band, on the server.
+
+On the **pm2** path, where the repo and its dev dependencies are both present:
 
 ```bash
 pnpm set-role you@example.com ADMIN
 ```
+
+On the **Docker** path, call the compiled script directly. The runner image carries
+production dependencies only, so there is no pnpm in it to run the package script, and
+`pnpm set-role` fails with `command not found`:
+
+```bash
+docker compose exec app node dist/scripts/set-role.js you@example.com ADMIN
+```
+
+It runs inside the app container, so it reuses that container's validated config and
+database connection — no `.env` to pass and no host MySQL client needed. Sign up through
+the API first; the script promotes an account that already exists.
 
 ## Things that will bite
 
