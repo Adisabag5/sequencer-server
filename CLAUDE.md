@@ -36,6 +36,9 @@ NestJS 11 · TypeORM + MySQL (`mysql2`) · `@nestjs/config` · `bcrypt` · `clas
 | undo the last migration | `pnpm migration:revert` |
 | write a new migration | `pnpm typeorm migration:generate src/migrations/<Name>` |
 | typecheck (equivalently) | `npx tsc --noEmit` (`pnpm build` skips `*.spec.ts`) |
+| run app + MySQL in Docker | `docker compose up -d --build` (see DEPLOY.md) |
+| build the image alone | `docker build -t sequencer-server .` |
+| back up the DB (on the VPS) | `ops/backup-db.sh` — dump, verify, rotate; from cron |
 
 ## File map
 
@@ -91,6 +94,10 @@ src/
     dto/create-user.dto.ts, dto/update-user.dto.ts (PartialType)
 test/app.e2e-spec.ts       e2e for GET / and the /profiles routes; no DB required
 test/auth.e2e-spec.ts      e2e for signup/signin/guard with an in-memory fake repository
+Dockerfile                 two-stage production image (build, then dist + prod deps only)
+docker-compose.yml         Traefik (TLS) + app + MySQL 8.4 for the VPS; only Traefik publishes a port
+.dockerignore              keeps node_modules, dist and .env out of the build context
+ops/backup-db.sh           host-side mysqldump -> gzip -> verify -> rotate; cron on the VPS
 ```
 
 ## Routes
@@ -344,7 +351,7 @@ reuse detection are in as well — see "Refresh tokens & sessions", which is the
 how sessions actually work. Neither suite needs a live MySQL.
 
 **Pulse domain (2026-08-20)**: profiles, collections and beats are in, with ownership
-checks throughout. **Current totals: `pnpm test` 84 unit, `pnpm test:e2e` 18 e2e.**
+checks throughout. **Current totals: `pnpm test` 109 unit, `pnpm test:e2e` 21 e2e.**
 
 The frontend is a live consumer as of 2026-09-24: Pulse saves a beat with `POST /beats` and
 updates it with `PATCH /beats/:id`. Changing a `/beats` shape now breaks a running client.
@@ -360,8 +367,14 @@ Decisions Adi settled on 2026-08-22 — treat these as closed, do not re-litigat
 
 Remaining — Phase 6 (production shape), plus auth follow-ups:
 
-1. No `docker-compose.yml` for MySQL, no API **versioning**, no Swagger. `README.md` is
-   still stock Nest boilerplate — but see `DEPLOY.md` for the Hostinger VPS runbook.
+1. No API **versioning**, no Swagger. See `DEPLOY.md` for the Hostinger VPS runbook —
+   both ways of running it there, pm2 behind nginx, or the `Dockerfile` and
+   `docker-compose.yml` added 2026-11-22 (two-stage image, non-root,
+   `NODE_ENV=production` baked in). The compose stack is **Traefik + app + MySQL**
+   (settled 2026-11-24): Traefik terminates TLS from container labels and gets its own
+   Let's Encrypt certificates, so the nginx/certbot half of the runbook applies only to
+   the pm2 path. Deliberately **one app replica** — `migrationsRun` at boot and in-memory
+   rate-limit counters both assume a single instance.
 
 **Every error has one shape** (`common/filters/all-exceptions.filter.ts`):
 

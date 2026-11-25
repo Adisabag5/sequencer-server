@@ -15,7 +15,7 @@ NestJS 11 · TypeScript · TypeORM + MySQL · JWT with rotating refresh tokens.
 ```bash
 nvm use                       # Node 24
 pnpm install
-cp .env.example .env          # then fill it in — see below
+cp -n .env.example .env       # -n: never clobber an .env you already have
 pnpm start:dev                # http://localhost:3000/api
 ```
 
@@ -103,6 +103,10 @@ payload is under 256 KB. The frontend owns that schema and its migrations.
 
 See **[`DEPLOY.md`](./DEPLOY.md)** — a single-origin Hostinger VPS, where this server
 serves both the API and the built frontend.
+
+Two ways to run it there, both in that runbook: Node under pm2, or the `Dockerfile` and
+`docker-compose.yml` in this repo — `docker compose up -d --build` brings up the API and
+MySQL together.
 
 ## Working on it
 

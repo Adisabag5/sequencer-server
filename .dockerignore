@@ -1,0 +1,27 @@
+# Everything here is excluded from the build context — the tarball Docker sends
+# to the daemon before the first instruction runs. Keeping it small makes builds
+# faster, but the real reason for the first two entries is correctness:
+# node_modules built on macOS would shadow the Linux install, and a copied .env
+# would bake secrets into an image layer forever.
+
+node_modules
+dist
+build
+coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+
+# Not needed to build or run the server
+test
+**/*.spec.ts
+ops
+.vscode
+.idea
+*.log
+.DS_Store
+Dockerfile
+.dockerignore
+docker-compose.yml
