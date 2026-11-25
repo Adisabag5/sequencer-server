@@ -252,7 +252,10 @@ Hostinger adds one by default — it needs a router, or visitors typing `www.` g
 *certificate* error rather than a 404. TLS is negotiated before any routing happens, so
 with no router asking for a certificate that covers `www`, Traefik falls back to its
 self-signed default and the browser refuses before it can be redirected anywhere. A second
-router fixes that, and the certificate ends up carrying both names.
+router fixes that: Traefik requests a certificate per router, so `www` gets its own
+single-name certificate rather than being added to the apex's. Two certificates, two
+orders against Let's Encrypt's weekly budget — and the apex's existing one is left
+untouched, which is why adding this did not reissue it.
 
 A redirect rather than serving the app on both names, because the session design assumes
 one origin: the refresh cookie is set on the apex and `CORS_ORIGIN` lists the apex, so
@@ -260,9 +263,12 @@ answering on `www` too would hand a visitor a cookie scoped to the wrong host an
 ways that are painful to reproduce. The apex router deliberately carries no middleware, so
 nothing sits between a visitor and the site.
 
-Traefik answers a permanent `redirectregex` with **308**, not 301, which preserves the
-request method — a POST to `www` arrives at the apex as a POST. The path and query survive
-too, through the regex capture.
+The redirect status depends on the method, which is better than it sounds: a `GET` gets
+**301** and anything else gets **308**. 301 is the cacheable, SEO-correct answer, but it
+also lets a client turn the request into a `GET` — harmless when it already was one, and a
+silently dropped body for a `POST`. Traefik avoids that by switching to 308 for every
+non-`GET` method, so a `POST` to `www` arrives at the apex as a `POST`. The path and query
+survive either way, through the regex capture.
 
 Two Traefik-specific failure modes worth knowing before the first deploy. The
 `letsencrypt` volume holds `acme.json`, which holds the certificate private keys: lose it
