@@ -97,7 +97,8 @@ services:
       # unobvious reason: TLS is negotiated before any routing happens, so
       # without a router asking for a certificate that covers www, the handshake
       # fails and the browser shows a security warning instead of following a
-      # redirect. The certificate ends up with both names in it.
+      # redirect. Traefik orders a certificate per router, so www gets its own
+      # rather than being added to the apex's as a SAN.
       #
       # A redirect rather than serving the app on both names, because the
       # session design assumes one origin: the refresh cookie is set on the
