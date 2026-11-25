@@ -161,7 +161,10 @@ request at all, and that reads as a broken session rather than a broken path.
 **Serving the frontend.** Set `CLIENT_DIST` to the built Angular directory and the server
 serves it, falling back to `index.html` for any non-API GET so deep links reach the router.
 Unset, the server is API-only — which is what dev and both test suites expect. If it points
-somewhere without an `index.html`, boot fails loudly rather than 404ing every page.
+somewhere without an `index.html`, boot fails loudly rather than 404ing every page. In
+Compose it is set to `/srv/client` on the service, not in `.env`, because the value is a
+path inside the container; the build is bind-mounted there from `/var/www/pulse/client` on
+the host and `rsync`ed up separately from any server deploy (see DEPLOY.md).
 
 `id` params are **strings** end-to-end (`User.id` is `bigint`, which TypeORM maps to string).
 `passwordHash` never reaches a response: `@Exclude()` on the entity + a global
