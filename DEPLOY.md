@@ -58,7 +58,7 @@ output is the smaller moving part:
 cd ~/DEV/visual-sequencer
 pnpm install --frozen-lockfile
 pnpm build
-rsync -a --delete dist/angular-starter-template/browser/ \
+rsync -a --delete dist/pulse/browser/ \
   root@<vps-ip>:/var/www/pulse/client/
 ```
 
@@ -150,7 +150,7 @@ store it.
 cd visual-sequencer
 pnpm install --frozen-lockfile
 pnpm build
-rsync -a --delete dist/angular-starter-template/browser/ user@vps:/var/www/pulse/client/
+rsync -a --delete dist/pulse/browser/ user@vps:/var/www/pulse/client/
 
 # 2. Backend
 cd sequencer-server
@@ -418,7 +418,7 @@ Then, from the `visual-sequencer` repo on your machine:
 
 ```bash
 pnpm build --configuration production
-rsync -a --delete dist/angular-starter-template/browser/ you@vps:/var/www/pulse/client/
+rsync -a --delete dist/pulse/browser/ you@vps:/var/www/pulse/client/
 ```
 
 `--delete` matters: Angular hashes filenames (`main-J2H5NPNG.js`), so without it every
@@ -580,7 +580,7 @@ the API first; the script promotes an account that already exists.
 - **`NODE_ENV` not `production`.** `synchronize` comes back on and TypeORM will reshape the
   schema to match the entities, dropping columns and their data. Check it first, every time.
 - **No HTTPS.** The cookie is `Secure`; sessions silently never persist.
-- **`CLIENT_DIST` pointing at `dist/angular-starter-template` instead of its `browser/`
+- **`CLIENT_DIST` pointing at `dist/pulse` instead of its `browser/`
   subdirectory.** Angular puts `index.html` one level down. The server refuses to boot
   rather than serve nothing, so you will see this immediately.
 - **A stale `dist/`.** `pnpm build` before restarting; pm2 runs the compiled output, not
