@@ -80,6 +80,10 @@ services:
       # Traefik is the one proxy hop in front, so req.ip is the real caller and
       # rate limiting counts per visitor rather than per proxy.
       TRUST_PROXY: 1
+      # The path *inside* the container, which is why this is set here and not in
+      # .env: CLIENT_DIST there would be a host path the container cannot see,
+      # and the server refuses to boot rather than 404 every page.
+      CLIENT_DIST: /srv/client
     depends_on:
       db:
         condition: service_healthy
@@ -126,14 +130,17 @@ services:
     # budget would silently become N × 10. Scaling out means a one-shot
     # migration step and Redis-backed throttling first.
 
-    # Serving the built Angular app from this same origin: mount the build in,
-    # and add
-    #     CLIENT_DIST: /srv/client
-    # to the `environment:` block above — not a second one, duplicate YAML keys
-    # are an error. CLIENT_DIST in .env is a *host* path the container cannot
-    # see, and the server refuses to boot rather than 404 every page.
-    # volumes:
-    #   - /var/www/pulse/client:/srv/client:ro
+    # The built Angular app, served from this same origin so /api/* is the API
+    # and everything else is the client with its deep-link fallback. Read-only:
+    # the server only ever reads it, and the deploy writes it from the host.
+    #
+    # A bind mount rather than baking the client into this image, because the
+    # two repositories release on their own schedules — a frontend fix should
+    # not need a server rebuild. The cost is that the directory must exist on
+    # the host before `up`, or Docker creates an empty one and the server
+    # refuses to boot for want of an index.html.
+    volumes:
+      - /var/www/pulse/client:/srv/client:ro
 
   db:
     image: mysql:8.4

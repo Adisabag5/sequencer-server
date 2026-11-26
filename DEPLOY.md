@@ -58,7 +58,7 @@ output is the smaller moving part:
 cd ~/DEV/visual-sequencer
 pnpm install --frozen-lockfile
 pnpm build
-rsync -a --delete dist/angular-starter-template/browser/ \
+rsync -a --delete dist/pulse/browser/ \
   root@<vps-ip>:/var/www/pulse/client/
 ```
 
@@ -150,7 +150,7 @@ store it.
 cd visual-sequencer
 pnpm install --frozen-lockfile
 pnpm build
-rsync -a --delete dist/angular-starter-template/browser/ user@vps:/var/www/pulse/client/
+rsync -a --delete dist/pulse/browser/ user@vps:/var/www/pulse/client/
 
 # 2. Backend
 cd sequencer-server
@@ -397,25 +397,43 @@ is a hope, not a backup.
 
 ### Serving the frontend from the container
 
-`CLIENT_DIST` in `.env` is a **host** path, and the container cannot see it — the server
-will refuse to boot and say exactly that. Mount the build in and point at the path inside
-the container instead. In `docker-compose.yml`, uncomment the app's `volumes:` block:
+This is wired up already: the app service mounts `/var/www/pulse/client` read-only at
+`/srv/client` and sets `CLIENT_DIST: /srv/client`. Two things about that are worth
+understanding before the first deploy.
 
-```yaml
-    volumes:
-      - /var/www/pulse/client:/srv/client:ro
+**`CLIENT_DIST` is set in compose, not in `.env`.** The value is a path *inside* the
+container. Put a host path like `/var/www/pulse/client` in `.env` and the container cannot
+see it, so the server refuses to boot — which is the right failure, but a confusing one if
+you do not know why.
+
+**The host directory must exist, with an `index.html` in it, before `up`.** Docker creates
+a missing bind-mount source as an empty directory rather than failing, and the server then
+refuses to boot for want of an `index.html`. So the client is copied up *first*:
+
+```bash
+ssh you@vps 'sudo mkdir -p /var/www/pulse/client && sudo chown -R $USER /var/www/pulse/client'
 ```
 
-and add one line to the `environment:` block that is already there — a second
-`environment:` key in the same service is a YAML error, not an override:
+Then, from the `visual-sequencer` repo on your machine:
 
-```yaml
-      CLIENT_DIST: /srv/client
+```bash
+pnpm build --configuration production
+rsync -a --delete dist/pulse/browser/ you@vps:/var/www/pulse/client/
 ```
+
+`--delete` matters: Angular hashes filenames (`main-J2H5NPNG.js`), so without it every
+deploy leaves the previous build's chunks behind and the directory grows forever.
+
+A bind mount rather than baking the client into the server image, because the two
+repositories release on their own schedules — a frontend fix should not need a server
+rebuild, and `rsync` of 740 KB is faster than any image build. The trade is that the
+client is now state on the host that no `git pull` restores; it comes from the build above.
 
 Then the whole site is one router and one certificate: `/api/*` is the API, everything else
 is the Angular app with its deep-link fallback. Same origin, so no CORS and the refresh
-cookie stays `SameSite=Lax`.
+cookie stays `SameSite=Lax`. Worth knowing which way the fallback leans: an unknown path
+under `/api` is still a JSON 404, while any other unknown path returns `index.html` so the
+Angular router can decide — otherwise a deep link like `/auth` would 404 on reload.
 
 ### With Dokploy
 
@@ -562,7 +580,7 @@ the API first; the script promotes an account that already exists.
 - **`NODE_ENV` not `production`.** `synchronize` comes back on and TypeORM will reshape the
   schema to match the entities, dropping columns and their data. Check it first, every time.
 - **No HTTPS.** The cookie is `Secure`; sessions silently never persist.
-- **`CLIENT_DIST` pointing at `dist/angular-starter-template` instead of its `browser/`
+- **`CLIENT_DIST` pointing at `dist/pulse` instead of its `browser/`
   subdirectory.** Angular puts `index.html` one level down. The server refuses to boot
   rather than serve nothing, so you will see this immediately.
 - **A stale `dist/`.** `pnpm build` before restarting; pm2 runs the compiled output, not
